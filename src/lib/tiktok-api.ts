@@ -1,3 +1,5 @@
+import { TiktokUser } from '@fongsidev/scraper';
+
 import {
   calcArrayAvg,
   calcAvg,
@@ -5,15 +7,28 @@ import {
   formatTikTokNumbers,
   formatTikTokUsername,
 } from '@/lib/formatters';
-import { getAllRegExpMatch, getFirstRegExpMatch } from '@/lib/regexp';
-import {
-  getAvailableUserVideosStats,
-  scrapeNewestTikTokVideoStats,
-  scrapeTikTokPage,
-  TikTokVideoMetrics,
-} from '@/lib/scrapers';
+import { scrapeNewestTikTokVideoStats } from '@/lib/scrapers';
 
-const MAX_VIDEOS_TO_SCRAPE = 10;
+export type TikTokVideoMetrics = {
+  comments: number;
+  likes: number;
+  shares: number;
+};
+
+export type TikTokApiResult = {
+  data: {
+    videos: {
+      author: {
+        nickname: string;
+        avatar: string;
+      };
+      play_count: number;
+      digg_count: number;
+      comment_count: number;
+      share_count: number;
+    }[];
+  };
+};
 
 export type TikTokUserMetrics = {
   user: {
@@ -35,42 +50,34 @@ export type TikTokUserMetrics = {
 
 export async function getTikTokUserMetrics(identifier: string) {
   const username = formatTikTokUsername(identifier);
-  const tikTokURL = `https://www.tiktok.com/${username}?lang=en`;
 
-  const { body: profileHTML } = await scrapeTikTokPage(tikTokURL);
-  if (!profileHTML) return null;
+  const user_data: TikTokApiResult | null = await TiktokUser(username);
 
-  const tikTokName: string = getFirstRegExpMatch(
-    profileHTML,
-    /"@id":"https:\/\/www\.tiktok\.com\/@(?:[a-zA-Z0-9-_.]{1,24})","name":"(.{1,30}) \(/
-  );
+  if (!user_data?.data?.videos) return null;
+
+  const first_video = user_data.data.videos[0];
+  const { author } = first_video;
+
+  const tikTokName: string | undefined = author?.nickname;
   if (!tikTokName) return null;
 
-  const tikTokAvatarURL: string =
-    getFirstRegExpMatch(
-      profileHTML,
-      /<div (?:.*?) data-e2e="user-avatar"(?:.+?)<img loading="lazy" src="(.+?)"/
-    ) || '';
+  const tikTokAvatarURL: string | undefined = author?.avatar;
 
-  const tikTokFollowers: string = getFirstRegExpMatch(
-    profileHTML,
-    /followers-count">([0-9.\w]+?)</
+  const tikTokFollowers = '0';
+
+  const tikTokVideoViews: number[] = user_data.data.videos.map(
+    (video) => video.play_count
   );
-
-  const tikTokVideoViews: number[] = getAllRegExpMatch(
-    profileHTML,
-    /<strong data-e2e="video-views" class="video-count [\w\d\s-]+?">(.+?)<\/strong>/g,
-    (m) => m[1],
-    MAX_VIDEOS_TO_SCRAPE
-  ).map(formatTikTokNumbers);
 
   const avgTikTokVideoViews: number = calcArrayAvg(tikTokVideoViews);
 
-  const metrics: TikTokVideoMetrics[] = await getAvailableUserVideosStats(
-    username,
-    MAX_VIDEOS_TO_SCRAPE,
-    profileHTML
-  );
+  const metrics: TikTokVideoMetrics[] = user_data.data.videos
+    .slice(10)
+    .map((video) => ({
+      likes: video.digg_count,
+      comments: video.comment_count,
+      shares: video.share_count,
+    }));
 
   // Sum all the metrics
   const combinedStats = metrics.reduce(
@@ -125,8 +132,7 @@ export async function getTikTokUserCompleteVideoMetrics(
   username: string
 ): Promise<TikTokVideoMetrics> {
   const metrics = await scrapeNewestTikTokVideoStats(
-    formatTikTokUsername(username),
-    MAX_VIDEOS_TO_SCRAPE
+    formatTikTokUsername(username)
   );
 
   return metrics;
